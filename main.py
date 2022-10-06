@@ -1,4 +1,5 @@
 #imported python mudules
+
 import time
 import threading
 import concurrent.futures
@@ -8,6 +9,8 @@ from datetime import datetime
 from labjack import ljm
 
 #imported custom codes
+
+from queue import Queue
 from power_sensor import power
 from control import get_error, get_temp
 from data_save import  init_file, write_data
@@ -60,6 +63,9 @@ output_data_types = [ljm.constants.FLOAT32 for _ in output_addresses]  # data ty
 error = get_error(29)
 previous_error = 0
 output = 0
+run_time = 0
+heatflux_21681_queue = Queue()
+heatflux_21680_queue = Queue()
 
 #power fntion tu run the power sensor in aother threath 
 # for code execution time porpuses
@@ -79,7 +85,7 @@ t.start()
 power_input = 0
 
 #the loop where all the control is executed
-while True:
+while run_time < 5400:
 
     #reading the senors input for the hot side
     results_hot = ljm.eReadAddresses(handle, hot_total_addresses, hot_addresses, hot_data_types)
@@ -97,6 +103,12 @@ while True:
     heatflux_21681 = heat_flux(results_hot[3], -1*results_hot[1], 1.35) 
     heatflux_21680 = heat_flux(results_hot[2], -1*results_hot[0], 1.34)
 
+    heatflux_21681_queue.append_1(heatflux_21681)
+    heatflux_21680_queue.append_1(heatflux_21680)
+
+    heat_flux_1 = heatflux_21680_queue.avg()
+    heat_flux_2 = heatflux_21681_queue.avg()
+
     #gets the error
     error = get_error(temp_average_hot)
     
@@ -113,8 +125,9 @@ while True:
     #prints all the values for debuggin and vizualitation propuses
     print("Average temperature:", temp_average_hot)
     print("power input:", power_input)
-    print("heat_flux_1:", heatflux_21680)
-    print("heat_flux_2:", heatflux_21681)
+    print("heat_flux_1:", heat_flux_1)
+    print("heat_flux_2:", heat_flux_2)
+    print("time pass in seconds:", run_time)
 
     # write the controller calculate value in the DAC 0 of the Data logger
     output_values = [output]  # [write of output]
@@ -138,9 +151,11 @@ while True:
 
     #calculating the cold side sensor average
     temp_average_cold = (results_cold[0]+results_cold[1])/2
-    
+    conductivity_avarega_hot = ((results_hot[3]+results_hot[4]+results_hot[5])/3)
+
+
     #send the read values to calculate the conductivity of the test plate
-    condutivity = con_calculation(temp_average_hot, temp_average_cold,((heatflux_21680 + heatflux_21681)/2))
+    condutivity = con_calculation(conductivity_avarega_hot, temp_average_cold,((heatflux_21680 + heatflux_21681)/2))
     print("Calculated conductivity:", condutivity)
     
     print("--------------")
@@ -151,12 +166,14 @@ while True:
 
     write_data(time_date, data,heatflux_21680,heatflux_21681,power_input,condutivity, file)
 
+    run_time+=1
     # Repeat every 1 second, in hardware delay
     skippedIntervals = ljm.waitForNextInterval(INTERVAL_HANDLE)
     if skippedIntervals > 0:
         print("\nSkippedIntervals: %s" % skippedIntervals)
 
-
+done = [0]
+ljm.eWriteAddresses(handle, output_tolat_addresses, output_addresses, output_data_types, done)
 
 
 
